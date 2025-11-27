@@ -61,7 +61,7 @@ CUDA_VISIBLE_DEVICES=0 python sample.py \
 Process a single PDB file:
 ```bash
 python sample.py \
-  --pdb_path input.pdb \
+  --pdb_path ./examples/6zht.pdb \
   --ckpt_path ./weights/mpnn_dataset/epoch\=66-step\=167499.pt \
   --num_predictions 8 \
   --output_root_dir ./output/
@@ -70,7 +70,7 @@ python sample.py \
 Process directory of PDB files:
 ```bash
 python sample.py \
-  --pdb_dir ./pdbs/ \
+  --pdb_dir ./examples/ \
   --ckpt_path ./weights/mpnn_dataset/epoch\=66-step\=167499.pt \
   --num_predictions 8 \
   --output_root_dir ./output/
@@ -79,7 +79,7 @@ python sample.py \
 Keep chain A fixed and redesign all other residues using a higher sampling temperature (0.3), excluding cysteines, adding backbone noise with a standard deviation of 0.2, and generating 8 sequence samples:
 ```bash
 python sample.py \
-  --pdb_path input.pdb \
+  --pdb_path ./examples/6zht.pdb \
   --chain_condition A \  
   --temp 0.3 \
   --omit_AA C \

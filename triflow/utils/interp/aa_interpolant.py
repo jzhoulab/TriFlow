@@ -19,7 +19,7 @@ from triflow.utils.tensor_utils import (
 )
 
 
-from triflow.utils.se3 import utils as du
+from triflow.utils.interp import utils as du
 from triflow.utils.rigid_utils import Rigid
 from triflow.mpnn_data.data_transforms import make_one_hot
 from triflow.utils.loss import scale_trans
