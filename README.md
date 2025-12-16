@@ -28,7 +28,7 @@ CUDA_VISIBLE_DEVICES=0 python sample.py \
 - `--pdb_path`: Path to a single input PDB file
 - `--pdb_dir`: Path to directory containing multiple PDB files to process
 - `--json_path`: Path to JSON file containing list of PDB file paths
-- `--ckpt_path`: Path to model checkpoint file (default: `./weights/afdb_dataset/epoch=90-step=90999.pt`)
+- `--ckpt_path`: Path to model checkpoint file (default: `./weights/afdb_dataset/afdb_weights.pt`)
 - `--device`: Device to run on, e.g., 'cuda:0' or 'cpu' (default: `cuda:0`)
 
 #### Output Options
@@ -62,7 +62,7 @@ Process a single PDB file:
 ```bash
 python sample.py \
   --pdb_path ./examples/6zht.pdb \
-  --ckpt_path ./weights/mpnn_dataset/epoch\=66-step\=167499.pt \
+  --ckpt_path ./weights/mpnn_dataset/pdb_weights.pt \
   --num_predictions 8 \
   --output_root_dir ./output/
 ```
@@ -71,7 +71,7 @@ Process directory of PDB files:
 ```bash
 python sample.py \
   --pdb_dir ./examples/ \
-  --ckpt_path ./weights/mpnn_dataset/epoch\=66-step\=167499.pt \
+  --ckpt_path ./weights/mpnn_dataset/pdb_weights.pt \
   --num_predictions 8 \
   --output_root_dir ./output/
 ```
@@ -93,12 +93,29 @@ Process multiple PDB files using JSON list (proteinmpnn style):
 ```bash
 python sample.py \
   --json_path ./examples/files.json \
-  --ckpt_path ./weights/mpnn_dataset/epoch\=66-step\=167499.pt \
+  --ckpt_path ./weights/mpnn_dataset/pdb_weights.pt \
   --num_predictions 8 \
   --output_root_dir ./output/
 ```
 
-This repository is a modified version of OpenFold and incorporates components from MultiFlow, ProteinMPNN, and Protenix.
+## Generate Summary
+
+Generate an interactive HTML summary of your predictions:
+
+```bash
+python generate_summary.py output/
+```
+
+This creates `output/summary.html` with:
+- Interactive structure viewer using py2Dmol
+- Multiple sequence generation visualization
+- PSSM heatmap and sequence logo plots
+
+![Summary Viewer](imgs/summary_viewer.png)
+
+
+---
+This repository is a modified version of OpenFold and incorporates components from MultiFlow, ProteinMPNN, Protenix, and py2Dmol 
 
 For any questions and concerns feel free to submit an issue
 

@@ -6,11 +6,11 @@ import torch.nn.functional as F
 from collections import defaultdict
 
 
-from scipy.spatial.transform import Rotation
-from scipy.optimize import linear_sum_assignment
-from torch import autograd
-from torch.distributions.categorical import Categorical
-from torch.distributions.binomial import Binomial
+# from scipy.spatial.transform import Rotation
+# from scipy.optimize import linear_sum_assignment
+# from torch import autograd
+# from torch.distributions.categorical import Categorical
+# from torch.distributions.binomial import Binomial
 
 from triflow.utils.tensor_utils import (
     add,
@@ -131,27 +131,6 @@ class Interpolant:
         return step_probs
 
 
-    def _aatypes_euler_step(self, d_t, t, logits_1, aatypes_t, temp=0.1):
-        # S = 21
-        batch_size, num_res, S = logits_1.shape
-        assert aatypes_t.shape == (batch_size, num_res)
-        assert S == 21
-        device = logits_1.device
-        
-        mask_one_hot = torch.zeros((S,), device=device)
-        mask_one_hot[du.MASK_TOKEN_INDEX] = 1.0
-
-        logits_1[:, :, du.MASK_TOKEN_INDEX] = -1e9    
-        pt_x1_probs = F.softmax(logits_1 / temp, dim=-1) # (B, D, S)
-        
-
-        aatypes_t_is_mask = (aatypes_t == du.MASK_TOKEN_INDEX).view(batch_size, num_res, 1).float()
-        step_probs = d_t * pt_x1_probs * ((1+ self._aatypes_cfg.noise*t) / ((1 - t))) # (B, D, S)
-        step_probs += d_t * (1 - aatypes_t_is_mask) * mask_one_hot.view(1, 1, -1) * self._aatypes_cfg.noise        
-        step_probs = self._regularize_step_probs(step_probs, aatypes_t)
-
-        
-        return torch.multinomial(step_probs.view(-1, S), num_samples=1).view(batch_size, num_res)
 
 
 
@@ -200,77 +179,6 @@ class Interpolant:
         return aatypes_t
     
 
-    def score(self, batch, model, frames, aa_init = None, temp = None):
-
-        num_batch = batch["all_atom_positions"].shape[0]
-        num_res= batch["all_atom_positions"].shape[1]        
-        diffuse_mask = batch["diffuse_mask"][...,-1]
-        
-        
-        if aa_init is None:
-            aatypes_0 = _masked_categorical(num_batch, num_res, self._device)
-
-        else:
-            aatypes_0 = aa_init.clone()
-
-        aatypes_1 = torch.zeros((num_batch, num_res), device = self._device).long()
-        logits_1 = torch.nn.functional.one_hot(
-            aatypes_1,
-            num_classes=self.num_tokens
-        ).float()
-
-        num_timesteps = self._sample_cfg.num_timesteps
-        ts = torch.linspace(self._cfg.min_t, 1.0, num_timesteps)
-        t_1 = ts[0]      
-        
-        aatypes_t_1 = aatypes_0
-        clean_traj = []
-        prot_traj = []
-
-        #cache the pair representation
-        z = model.run_embedder(batch)   
-
-        for t_2 in ts[1:]:
-            batch['aatypes_t'] = aatypes_t_1
-
-            t = torch.ones((num_batch, 1), device = self._device) * t_1
-            batch['cat_t'] = t
-            target_feat_t = make_one_hot(batch["aatypes_t"].to(torch.int64), 21)
-            d_t = t_2 - t_1
-            with torch.no_grad():         
-
-                # model_out = model.run_blocks(batch, z, rigid_frames=frames, seq=target_feat_t, temp=self._aatypes_cfg.temp)
-                model_out = model.run_blocks(batch, z, rigid_frames=frames, seq=target_feat_t, temp=temp)
-
-            pred_aatypes_1 = model_out['pred_aatypes']
-            pred_logits_1 = model_out['pred_logits']
-            clean_traj.append(pred_aatypes_1.detach().cpu())
-            
-            
-            aatypes_t_2 = self._aatypes_euler_step(d_t, t_1, pred_logits_1, aatypes_t_1, temp)
-            aatypes_t_2 = _aatypes_diffuse_mask(aatypes_t_2, aatypes_1, diffuse_mask)
-
-            aatypes_t_1 = aatypes_t_2
-            prot_traj.append( aatypes_t_2.cpu().detach())
-
-            t_1 = t_2
-
-        #we sampled until min need to do one more step
-
-        t_1 = ts[-1]
-        batch['aatypes_t'] = aatypes_t_1
-        
-        with torch.no_grad():
-            target_feat_t = make_one_hot(batch["aatypes_t"].to(torch.int64), 21) #temp add back recycling dim            
-            model_out = model.run_blocks(batch,z, rigid_frames=frames, seq=target_feat_t, temp=temp)
-
-        pred_aatypes_1 = model_out["pred_aatypes"]
-        pred_aatypes_1 = _aatypes_diffuse_mask(pred_aatypes_1, aatypes_1, diffuse_mask).to(torch.int64) #only update the positions with diffuse_mask
-        clean_traj.append(pred_aatypes_1.detach().cpu())
-        prot_traj.append(pred_aatypes_1.detach().cpu())
-
-        return prot_traj, clean_traj
-
 
     def aa_sample(self, batch, model, frames, aa_init = None, temp = None, omit_AA=None, tied_weights=False, sample_purity=False, sample_priority=False, run_cfg=True):
 
@@ -278,6 +186,7 @@ class Interpolant:
         num_res= batch["all_atom_positions"].shape[1]        
         diffuse_mask = batch["diffuse_mask"][...,-1]
         dtype = next(model.parameters()).dtype
+        unmasked_probs = torch.zeros((num_batch, num_res, self.num_tokens), device=self._device)
         
         if aa_init is None:
             aatypes_0 = _masked_categorical(num_batch, num_res, self._device)
@@ -359,12 +268,13 @@ class Interpolant:
             else:
                 if sample_priority:
                     priority = torch.sort(torch.mean(batch["avg_distances"][..., -1], dim = -1))[1]                            
-                    aatypes_t_2, conf_pred = self._aatypes_euler_step(d_t, t_1, pred_logits_1, aatypes_t_1, temp, return_confidence=True, omit_indices=omit_AA, priority=priority)    
+                    aatypes_t_2, conf_pred, unmasked_probs = self._aatypes_euler_step(d_t, t_1, pred_logits_1, aatypes_t_1, temp, return_confidence=True, omit_indices=omit_AA, priority=priority, unmasked_probs=unmasked_probs)    
                     conf = conf + conf_pred
-
+                    unmasked_probs = unmasked_probs
                 else:
-                    aatypes_t_2, conf_pred = self._aatypes_euler_step(d_t, t_1, pred_logits_1, aatypes_t_1, temp, return_confidence=True, omit_indices=omit_AA)    
+                    aatypes_t_2, conf_pred, unmasked_probs = self._aatypes_euler_step(d_t, t_1, pred_logits_1, aatypes_t_1, temp, return_confidence=True, omit_indices=omit_AA, unmasked_probs=unmasked_probs)    
                     conf = conf + conf_pred
+                    
 
             
             aatypes_t_2 = _aatypes_diffuse_mask(aatypes_t_2, aatypes_1, diffuse_mask)
@@ -392,15 +302,13 @@ class Interpolant:
         prot_traj.append(pred_aatypes_1.detach().cpu())        
 
         conf = torch.exp(-conf / num_res)
-        # conf = torch.exp(-torch.tensor(conf, device=self._device) / num_res)
-        # conf = -conf / (torch.log(torch.tensor(20, device=self._device)) * num_res)
         conf = round(conf.item(), 2)        
-        
-        return prot_traj, conf
+                
+        return prot_traj, conf, unmasked_probs
 ### 
 
 
-    def _aatypes_euler_step(self, d_t, t, logits_1, aatypes_t, temp=0.1, return_confidence=False, omit_indices=None, priority=None):
+    def _aatypes_euler_step(self, d_t, t, logits_1, aatypes_t, temp=0.1, return_confidence=False, omit_indices=None, priority=None, unmasked_probs=None):
         # S is the total number of tokens (should be 21)
         batch_size, num_res, S = logits_1.shape
         device = logits_1.device
@@ -439,7 +347,7 @@ class Interpolant:
             
             return final_samples, torch.tensor(0.0, device=self._device)
             
-            
+        
         aatypes_t_is_mask = (aatypes_t == du.MASK_TOKEN_INDEX).view(batch_size, num_res, 1).float()
         step_probs = d_t * pt_x1_probs * ((1 + self._aatypes_cfg.noise * t) / (1 - t))
         step_probs += d_t * (1 - aatypes_t_is_mask) * mask_one_hot.view(1, 1, -1) * self._aatypes_cfg.noise
@@ -447,23 +355,28 @@ class Interpolant:
         if omit_indices is not None:
             for idx in omit_indices:
                 step_probs[..., idx] = 0.0
-
         
-        step_probs = self._regularize_step_probs(step_probs, aatypes_t)
-        
+        step_probs = self._regularize_step_probs(step_probs, aatypes_t)        
         
         samples = torch.multinomial(step_probs.view(-1, S), num_samples=1).view(batch_size, num_res)
-        
 
+        # Find positions that were unmasked in this iteration
+        unmasked_positions = (aatypes_t == du.MASK_TOKEN_INDEX) & (samples != du.MASK_TOKEN_INDEX)        
+        # Copy step_probs at unmasked positions to unmasked_probs tensor
+        if unmasked_probs is not None and unmasked_positions.any():
+            unmasked_probs[unmasked_positions] = pt_x1_probs[unmasked_positions]    
+        
         if return_confidence:
             log_probs = F.log_softmax(logits_1, dim=-1)
             selected_log_probs = log_probs.gather(dim=-1, index=samples.unsqueeze(-1)).squeeze(-1)
             diff_mask = (aatypes_t != samples).float()  # Positions that were updated
             conf = torch.sum((selected_log_probs * diff_mask) / (1 - t), dim=1)
+            if unmasked_probs is not None:
+                return samples, conf, unmasked_probs
             return samples, conf
 
-
-        return samples    
+        
+        return samples, unmasked_probs    
     
 
 

@@ -40,7 +40,7 @@ class TriFoldPredictor:
             device (str): Device to run the model on (e.g., 'cpu' or 'cuda:0').
         """
         
-        self.ckpt_path = ckpt_path or "./weights/afdb_dataset/epoch=90-step=90999.pt"
+        self.ckpt_path = ckpt_path or "./weights/afdb_dataset/afdb_weights.pt"
         self.device = device
         self.config = model_config(model_config_preset, train="False")
         self.flow_config = get_config()
@@ -114,6 +114,7 @@ class TriFoldPredictor:
 
         asym_id = ground_truth["asym_id"].squeeze(-1)
         residue_index = ground_truth["residue_index"].squeeze(-1)
+        
 
         # Create seq_prior here
         seq_prior = torch.zeros_like(ground_truth["target_feat"][..., -1])
@@ -261,9 +262,50 @@ class TriFoldPredictor:
                     
             if partial_flows:
                 prot_traj, conf = self.interpolant.partial_flows(data, self.model, rigid_frames, aa_init=seq_prior, temp=temp, omit_AA=omit_AA_idx, tied_weights=tied_weights, sample_priority=sample_priority, run_cfg=run_cfg, sample_purity=sample_purity, t=t)    
+                unmasked_probs = None
             else:
-                prot_traj, conf = self.interpolant.aa_sample(data, self.model, rigid_frames, aa_init=seq_prior, temp=temp, omit_AA=omit_AA_idx, tied_weights=tied_weights, sample_priority=sample_priority, run_cfg=run_cfg, sample_purity=sample_purity)
+                prot_traj, conf, unmasked_probs = self.interpolant.aa_sample(data, self.model, rigid_frames, aa_init=seq_prior, temp=temp, omit_AA=omit_AA_idx, tied_weights=tied_weights, sample_priority=sample_priority, run_cfg=run_cfg, sample_purity=sample_purity)
             predicted_seq = _aatype_to_str_sequence(prot_traj[-1][0])
+            
+            # Save unmasked_probs to JSON file in a separate json subdirectory
+            if unmasked_probs is not None:
+                output_prefix = os.path.splitext(os.path.basename(pdb_path))[0]
+                json_path = os.path.join(os.path.dirname(seqs_path), "json")
+                os.makedirs(json_path, exist_ok=True)
+                probs_output_path = os.path.join(json_path, f"{output_prefix}_{prediction_index}_unmasked_probs.json")
+                
+                # Create pretty formatted JSON with amino acid names
+                aa_names = list(restype_order_with_x.keys())
+                probs_np = unmasked_probs.cpu().numpy()[0]  # Remove batch dimension, shape: (n_res, 21)
+                
+                # Build output dictionary with metadata
+                output_data = {
+                    "metadata": {
+                        "pdb_path": pdb_path,
+                        "ckpt_path": self.ckpt_path,
+                        "temperature": temp,
+                        "noise_std": noise_std,
+                        "prediction_index": prediction_index,
+                        "num_residues": probs_np.shape[0],
+                        "run_cfg": run_cfg,
+                        "sample_purity": sample_purity,
+                        "sample_priority": sample_priority,
+                        "tied_weights": tied_weights,
+                        "omit_AA": omit_AA,
+                    },
+                    "residue_probabilities": {}
+                }
+                
+                for res_idx in range(probs_np.shape[0]):
+                    res_probs = probs_np[res_idx]
+                    # Only include residues that have non-zero probabilities (were unmasked)
+                    if res_probs.sum() > 0:
+                        output_data["residue_probabilities"][f"residue_{res_idx + 1}"] = {
+                            aa: round(float(prob), 6) for aa, prob in zip(aa_names, res_probs)
+                        }
+                
+                with open(probs_output_path, 'w') as f:
+                    json.dump(output_data, f, indent=2)
             
             #create a new mask to only have the backbone atoms
             atom_mask = torch.zeros_like(data["all_atom_mask"])
@@ -275,7 +317,7 @@ class TriFoldPredictor:
                 atom_positions=data["noiseless_all_atom_positions"].cpu().numpy()[0, ..., 0],
                 atom_mask=data["all_atom_mask"].cpu().numpy()[0, ..., 0],                
                 aatype=prot_traj[-1][0].cpu().numpy(),
-                residue_index=data["residue_index"].cpu().numpy()[0, ..., 0] + 1, # we need to add one because it is zero indexed
+                residue_index=data["residue_index"].cpu().numpy()[0, ..., 0], 
                 chain_index=data["asym_id"].cpu().numpy()[0, ..., 0],
                 b_factors=torch.ones(
                     data["all_atom_positions"].shape[1], data["all_atom_positions"].shape[2]
@@ -337,7 +379,7 @@ def main():
     parser.add_argument(
         '--ckpt_path',
         type=str,
-        default="./weights/qc_dataset/epoch=90-step=90999.pt",
+        default="./weights/afdb_dataset/epoch=90-step=90999.pt",
         help='Path to the model checkpoint file. Defaults to the example path if not provided.'
     )
     parser.add_argument(
