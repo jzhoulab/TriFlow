@@ -17,7 +17,7 @@ mamba env create -f environment.yaml
 ```bash
 CUDA_VISIBLE_DEVICES=0 python sample.py \
   --pdb_path <path_to_pdb> \
-  --ckpt_path ./weights/mpnn_dataset/epoch\=66-step\=167499.pt \
+  --ckpt_path ./weights/mpnn_dataset/pdb_weights.pt \
   --num_predictions 8 \
   --output_root_dir ./scratch/
 ```
@@ -80,7 +80,7 @@ Keep chain A fixed and redesign all other residues using a higher sampling tempe
 ```bash
 python sample.py \
   --pdb_path ./examples/6zht.pdb \
-  --chain_condition A \  
+  --chain_condition A \
   --temp 0.3 \
   --omit_AA C \
   --noise_std 0.2 \
