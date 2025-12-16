@@ -379,7 +379,7 @@ def main():
     parser.add_argument(
         '--ckpt_path',
         type=str,
-        default="./weights/afdb_dataset/epoch=90-step=90999.pt",
+        default="./weights/afdb_dataset/afdb_weights.pt",
         help='Path to the model checkpoint file. Defaults to the example path if not provided.'
     )
     parser.add_argument(
